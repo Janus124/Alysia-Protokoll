@@ -1,0 +1,779 @@
+//-----DATA STRUCTURES-----
+class ChainStructure{
+    int lenght;
+    List<ChainID> chain;
+    int n;              //aus wie vielen ChainElementen die Chain bestehen soll.
+
+    ChainStructure();
+    void delete(ChainID id);    //wenn nicht enthalten passiert nichts
+    void add(ChainID id);    //wenn schon enthalten passiert nichts
+    ChainID infront(Chainid id);
+    ChainID getTail();
+    ChainID getHead();
+    Mode getMode(ChainID);
+    List<ChainID> getIDs();
+}
+
+class ChainMap<ChainID, boolean> extends Map<I, boolean>{
+
+    //returned die ChainIDs, die schon gefailed sind
+    FailedChain getFailed(){
+        FailedChain failedChain = FailedChain();
+        For each ChainID id in keys{
+            if (values[id]) failedChain.add(id);
+        }
+        return failedChain;
+    }
+
+    void setFailed(ChainID id){
+        values[id] = 1;
+    }
+
+    void mergeFailed(FailedChain failedChain){
+        for each ChainId id in failedChain{
+            if(failedChain[id]) values[id] = 1;
+        }
+    }
+
+    //data reduction
+    void update(){
+        //delete failed below
+        for each ChainId id in [values.min, values.max]{
+            //von min nach max
+            if(chainMap[id]) chainMap.remove(id);
+            else break;
+        }
+    }
+}
+
+class FailedChain<ChainID> extends Set<ChainID>{
+
+    boolean isFailed(ChainID id){
+        for ChainID chainID in values{
+            if(chainID == id) return true;
+        }
+        return false;
+    }
+}
+
+class ValueOpinions<OrganizerID, ChainID, boolean>{
+    Map<OrganizerID, ChainID> keys;
+    Map<OrganizerID, boolean> values;
+
+    //Constructor
+    ValueOpinions(){
+        keys = Map();
+        values = Map();
+    }
+
+    //Operations
+    void put (OrganizerID oid, ChainID cid, boolean failed){
+        keys[oid] = cid;
+        values[id] = failed;
+    }
+
+    boolean Value(OrganizerID id){
+        return values[id];
+    }
+
+    boolean match(ChainId key, Number threshold){
+        Voter<OrganizerID, boolean> voter = Voter(threshold, |boolean|)     //?
+        For each OrganizerID id{
+            if(keys[id] == key) voter[id] = values[id];
+        }
+        return voter.vote();
+    }
+}
+
+class ChainOpinions<ChainID, ValueOpinions<OrganizerID, ChainId, boolean>> {    //ProgressOpinions nimmt nur das höchste nicht f+1
+    Map<ChainID, ValueOpinions<OrganizerID, ChainId, boolean>> map;     //in einem ValueOpinions ist für jeden Organizer eine Meinung zum gleichen ChainElement
+
+    //Constructor
+    ChainOpinions(){        //überschreibt
+        for each OrganizerID oid{
+            map[oid] = ValueOpinions();
+        }
+    }
+
+    void put (OrganizerID oid, ChainID cid, boolean failed){
+        map[cid].put(oid, cid, failed);
+    }
+
+    boolean match(ChainID cid, Number threshold){
+        Voter<OrganizerID, boolean> voter = Voter(threshold(threshold, |OrganizerID|))
+        for each OrganizerID id{
+            if(map[cid].keys[id] == cid) voter[id] = map[cid].values[id];
+        }
+        return voter.vote();
+    }
+
+}
+
+def ChainMaps: Map<OrganizerID, ChainMap>
+
+//------------------
+
+//-----Client-----
+class Client extends ChainObserver{
+    CommandWindow<Command> commands;
+    Mode mode;          //Normal or Idle
+
+    //Initialization
+    On system start{
+        commands := CommandWindows();
+        mode := "IDLE";
+    }
+
+    //Services
+    CommandSequence<CommandWindow> getCommands(CommandRange r){
+        return commands.sequences(r);
+    }
+
+    //Command submission
+    boolean invoke (Any a){
+        //Check state
+        if(commands.pos == commands.max) return false;
+
+        //Update state
+        commands[commands.pos] = Command(this.id, commands.pos, a);
+
+        //Switch mode
+        mode = "Normal"
+        return true;
+    }
+//---IDLE---
+
+    //Do nothing
+
+//---NORMAL---
+    CommandWindow<Result> results;
+
+    //Initialization
+    On system start{
+        results = ???;
+    }
+
+    //Periodic tasks
+    Periodically{
+        CommandRange r = results.empty();
+        if (r.count > 0) chain.getTail().getResults(this.id, r)
+    }
+
+    //Inputs
+    On receiving CommandSequence<Result> rs from ChainID cid{
+        //Check input
+        if(results.appendable(rs) == false) return;
+
+        //store
+        results.append(rs);
+
+        CommandNR complete = results.min;           //min = kleinste CommandNR
+        for each CommandNR x in [results.min, commands.pos]{
+            Result r = results[x];
+
+            Deliver r to user;
+            complete = x;
+        }
+
+        //Move windows
+        commands.move(complete);
+        results.move(complete);
+
+        //Switch mode if possible
+        if (commands.pos == complete) mode = IDLE;
+    }
+}
+
+//-----FrontEnd-----
+class FrontEnd extends CompletionObserver{
+
+    //State
+    CommandWindows<Command> commands;
+    CommandProgress submitted;          //? Was macht submitted
+
+    //Initialization
+    On system start{
+        commands := CommandWindows();
+        submitted:= CommandProgress();
+    }
+
+    //Window synchronization
+    On CommandProgress complete change{
+        For each ClientID clt{
+            commands[clt].move(complete[clt]);
+            submitted[clt] :=max(submitted[clt], complete[clt])
+        }
+    }
+    
+    //Services
+    CommandSequences<Command> getCommands(CommandRanges rs){
+        return commands.sequences(rs);
+    }
+
+    CommandProgress getSubmitted(){
+        return submitted;
+    }
+
+    //Periodic tasks
+    Periodically{
+        
+        //fetch Client Commands
+        For each Client clt{
+            CommandRange r := commands[clt.id].empty();
+            if(r.count > 0) clt.getCommands(r);
+        }
+
+        //Fetch front-end commands
+        For each FrontEnd fre{
+            CommandRanges re := commands.empty();
+            IF(rs.size() > 0) fre.getCommands(rs)
+        }
+    }
+
+    //Inputs
+    On receiving CommandSequence<Command> xs from ClientID clt{
+        store(xs, clt);
+    }
+
+    On receiving CommandSequences<Command> xss from FrontEndID fre{
+        For each ClientID clt: store(sxx[clt], clt);
+    }
+
+    //Auxiliary method
+    void store(CommandSequence<Command> xs, ClientID clt){
+        //check input
+        if(command[clt].appendable(xs) == false) return;
+
+        //Check input values
+        CommandNR from := max(xs.min, commands[clt].pos);   //den kleinsten, noch nicht bekannten Command im Fenster
+        CommandNR to := min(xs.pos, commands[clt].max);     //den größten vorhandenen Command im Fenster
+        For each CommandNR x in [from, to]{
+            if(xs.validate(clt, x) == false) return;
+        }
+
+        //Check input authenticity
+        if(xs is not authentic) return;
+
+        //Update output
+        commands[clt].append(xs); //fügt den Command der commands map zu
+        submitted[clt]. := max(submitted[clt], commands[clt].pos); //aktualisiert submitted
+    }
+}
+
+class Chain extends ChainObserver, AgreementObserver, CompletionObserver{
+    //TODO results und execute
+    AgreementWindow<Command> commands;      //Sequence<CommandRN, Command> //to execute
+    TimeStamp lastContact;
+    Mode mode;
+
+    //results
+    Application application;
+    CommandWindows<Result> results;
+
+
+    //Initialization
+    On system start{
+        commands = AgreementWindow();
+        lastContact = TimeStamp.now();
+        mode = "IDLE"
+
+        agreed = 0;
+        completed = CommandProgress();
+    }
+
+    On ChainStructure chain change{
+        //change to new mode 
+        mode = chain.getMode(this.id);
+    }
+
+    //Services
+    TimeStamp getLiveliness(){
+        retun lastContact;
+    }
+
+    AgreementSequence<Command> getCommands(AgreementNR from){
+        return commands.get(from);
+    }
+
+    AgreementNR getAgreed(){
+        return agreed;
+    }
+
+    CommandProgress getCompleted(){
+        return completed;
+    }
+
+    CommandSequence<Result> getResults(ClientID cid, CommandRange r){
+        return results[cid].sequence(r);
+    }
+    
+
+
+//---IDLE---
+    /*
+    ClientID, CommandNR = proposed
+    AgreementNR, Command = proposals //hierhin
+
+    ClientId, CommandNR, Command = allCommands
+    ClientId, CommandNR progress = progress
+    OrderNR, Command = commands   //hierhin
+    */
+
+
+//---HEAD---
+    CommandWindows<Command> allCommands;   //Windows<ClientID, CommandNr, Command> from FrontEnd
+    CommandProgress progress;
+
+    //Initialization
+    On system start{
+        allCommands = CommandWindows();
+        progress = CommandProgress();
+    }
+
+
+    On CommandProgress completed change{
+        for each Client clt in complete{
+            allCommands[clt].move(completed[clt])
+        }
+    }
+
+    On AgreementNR agreed change{
+        //update AgreementWindow
+        if(commands.pos < agreed){
+            commands.move(agreed)
+        }
+        decideOrder();
+    }
+
+    //Periodic tasks
+    Periodically{
+        //get new Commands from Frontend
+        For each FrontEnd fre{
+            CommandRanges rs = allCommands.empty();
+            if(rs.size() > 0) fre.getcommands(rs);
+        }
+    }
+
+    //Inputs
+    On receiving CommandSequences<Command> xs from FrontEndID fre{    
+        store(xs, clt);
+        decideOrder();
+
+        lastContact = TimeStamp(now);
+    }
+
+    //Auxiliary methods
+    void store(CommandSequence<Command> xs, ClientID clt){
+        //check input
+        if(allCommands[clt].appendable(xs) == false) return;
+
+        //Check input values
+        CommandNR from := max(xs.min, allCommands[clt].pos);   //den kleinsten, noch nicht bekannten Command im Fenster
+        CommandNR to := min(xs.pos, allCommands[clt].max);     //den groÃŸten vorhandenen Command im Fenster
+        For each CommandNR x in [from, to]{
+            if(xs.validate(clt, x) == false) return;
+        }
+
+        //Check input authenticity
+        if(xs is not authentic) return;
+
+        //Update output
+        allCommands[clt].append(xs); //fÃ¼gt den Command der commands map zu
+    }
+
+    void decideOrder(){
+        //TODO
+        //Proposer
+        For each AgreementNR a in [commands.pos, commands.max]{   //für alle plätze, die noch frei sind
+            Command x = nil;
+            For each ClientId clt in random order{
+                x = allCommands[clt][progress[clt]]             //nimmt den nächsten Command, der noch nicht eingefÃ¼gt wurde
+                if(x != nil) break;
+            }
+            if( x == nil) break;
+
+            //Update data
+            commands[a] = x;
+            progress[x.cid] = x.xnr + 1;
+        }
+    }
+
+    void execute(Command x){
+        Any result = application.execute(x.op);
+        results[x.cid].move(x.nr - results[x.cid].capacity + 1)
+        results[x.cid] = Result(x.xid, result)
+    }
+
+//---MIDDLE---
+
+    On AgreementNR agreed change{
+        //update AgreementWindow
+        if(commands.pos < agreed){
+            commands.move(agreed)
+        }
+    }
+
+    //Periodic tasks
+    Periodically{
+        //get new Commands
+        chain.infront(this.id).getCommands(commands.pos);          
+    }
+
+    //Inputs
+    On receiving AgreementSequence<Command> as from ChainID ch{
+        command.append(as);
+
+        liveliness = TimeStamp(now);
+    }
+
+    //Auxiliary methods
+    void execute(Command x){
+        Any result = application.execute(x.op);
+        results[x.cid].move(x.nr - results[x.cid].capacity + 1)
+        results[x.cid] = Result(x.xid, result)
+    }
+
+
+//---TAIL---
+
+    //Periodic tasks
+    Periodically{
+        //get new Commands
+        chain.infront(this.id).getCommands(commands.pos);           
+
+        //get read Commands 
+    }
+
+    //Inputs
+    On receiving AgreementSequence<Command> as from ChainID ch{
+        command.append(as);
+
+        liveliness = TimeStamp(now);
+    }
+
+
+    //Auxiliary methods
+    execute(Command x){
+        Any result = application.execute(x.op);
+        results[x.cid].move(x.nr - results[x.cid].capacity + 1)
+        results[x.cid] = Result(x.xid, result)
+
+        agreed++:
+        completed[x.cid] = max(completed[x.cid], x.xnr);
+
+        //update agreed
+        if(commands.pos < agreed){
+            commands.move(agreed);
+        }
+    }
+}
+
+class Admin{
+    int era;
+    List<ChainID> activeChains;
+
+    //Initialization
+    On system start{
+        era = 0;
+        chain = List();
+    }
+
+    //Services
+    (int, List<ChainID>) getEraAndChain(){
+        return (era, chain.getIDs());
+    }
+
+    //Human action
+}
+
+class Organizer{
+
+    ChainMap chainMap;
+    Map<ChainID, TimeStamps> liveliness;
+    int timeout;
+
+        //Initialization
+    On system start{
+        chainMap = ChainMap();
+        timeStamps = Map();
+        int timeout = //?;    
+    }
+
+    //Services
+    FailedChain getFailed(){
+        return chainmap.getFailed();
+    }
+
+    //Periodic tasks
+    Periodically{
+        //get liveliness
+        for each Chain chn{
+            chn.getLiveliness();
+        }
+
+        //get other currentChain from Organizers
+        for each Organizer orga{
+            orga.getFailed();
+        }
+    }
+
+    //Inputs
+    On receiving TimeStamp ts from ChainID chn{
+        if(ts <= liveliness[chn]) return;
+        liveliness[chn] = ts;
+
+        if(liveliness[chn] - TimeStamp.now() > timeout){
+            //Node failed
+            chainMap[chn] = 1;
+        }
+    }
+
+    On receiving FailedChain failedChain from OrganizerID orga{
+        chainMap.mergeFailed(failedChain);
+    }
+
+    //Auxiliary methods
+}
+
+class ChainObserver{
+    int era;
+    List<ChainID> adminChain;
+    ChainMaps failedChains;
+    ChainStructure chain;
+
+    ChainOpinions opinions;
+
+    //Initialization
+    On system start{
+        era = 0;
+        adminChain = List();
+        failedChains = ChainMaps();
+        chain = ChainStructure();
+        opinions = ChainOpinions();
+    }
+
+    //Periodic tasks
+    Periodically{
+        //ask Admin
+        Admin.getEraAndChain();
+
+        //ask Organizers
+        for each Organizer org{
+            org.getFailed();
+        }
+    }
+    
+    //Inputs
+    On receiving (int, List<ChainID>) (e, list) from Adminid adm{
+        if(e < era) return;
+        adminChain = list;
+        era = e;
+        UpdateChain();
+    }
+
+    On receiving FailedChain fc from Organizer org{
+        failedChains[org].mergeFailed(fc);
+
+        for each ChainId id in failedChains[orga]{
+            opinions.put(org, id, failedChains[orga][id]);
+        }
+        updateChain();
+    }
+
+    //Auxiliary methods
+    void updateChain(){     //?
+        Set<ChainID> allIDs = new Set();
+        
+        //get all IDs
+        for ChainID id in chain.getIDs{
+            allIDs.add(id);
+        }
+        for ChainID id in adminChain{
+            allIDs.add(id)
+        }
+        
+        //update Chain
+        for ChainID id in allIDs{
+            if(opinions.match(ChainID, F+1) && adminChain.contains(id)) chain.add(id)
+            else chain.delete(id);
+        }
+    }
+}
+
+class AgreementMonitor{
+    AgreementNR agreed;
+    
+    //Initialization
+    On system start{
+        agreed = 0;
+    }
+
+    //Services
+    AgreementNR getAgreed(){
+        return agreed;
+    }
+
+    //Periodic tasks
+    Periodically{
+        //get agreed from Tail
+        chain.getTail().getAgreed();
+
+        //get agreed from other AgreementMonitors
+        for each AgreementMonitor agm{
+            agm.getAgreed;
+        }
+    }
+
+    //Inputs
+    On receiving AgreementNR agr from Chain t{
+        //Check Input
+        if(agr <= agreed) return;
+        if(agr is not authentic) return;
+
+        //store input
+        agreed = agr;
+    }
+
+    On receiving AgreementNR agr from AgreementMonitor agm{
+        //Check Input
+        if( a <= agreed) return;
+        if(agr is not authentic) return;
+
+        //store input
+        agreed = agr;
+    }
+
+    //Auxiliary methods
+
+}
+
+class AgreementObserver{
+    AgreementNR agreed;
+    NumberOpinions<AgreementMonitorID, AgreementNR> thresholds;
+    
+    //Initialization
+    On system start{
+        agreed = 0;
+        thresholds = NumberOpinions();
+    }
+
+    //Periodic tasks
+    Periodically{
+        //get agreed from all AgreementMonitors
+        For each AgreementMonitor agm{
+            agm.getAgreed();
+        }
+    }
+
+    //Inputs
+    On receiving AgreementNR a from AgreementMonitorID agm{
+        //Check input
+        if (a <= agreed) return;
+        if (a <= thresholds[agm]) return;
+
+        //store input
+        thresholds[agm] = a;
+
+        //update state
+        agreed = max(thresholds.highest(F+1), 0);
+    }
+}
+
+class CompletionMonitor{
+    CommandProgress completed;
+    ProgressOpinions<CompletionMonitorID, CommandProgress> monitors;
+
+    On system start{
+        completed = CommandProgress();
+        monitors = ProgressOpinions();
+    }
+
+    //Services
+    CommandProgress getCompleted(){
+        return completed;
+    }
+
+    //Periodic tasks
+    Periodically{
+        //get Completed from Chain
+        chain.getTail().getCompleted();
+
+        //get completed from other monitors
+        For each CompletionMonitor cpm{
+            cpm.getCompleted();
+        }
+    }
+
+    //Inputs
+    On receiving CommandProgress p from ChainID id{
+        for ClientID cid in p{
+            completed[cid] = max(p[cid], completed[cid]);
+        }
+    }
+
+    On receiving CommandProgress p from CompletionMonitorID cmp{
+        //Check input
+        if (p <= completed) return;
+        if (p <= monitors[cpm]) return;
+
+        //store input
+        monitors[cpm] = p
+
+        //update state
+        CommandProgress v = monitors.highest(F+1);
+        For each Client clt{
+            threshold[clt] = max(threshold[clt], v[clt])
+        }
+    }
+}
+
+class CompletionObserver{
+    ProgressOpinions<CompletionMonitorID, CommandProgress> thresholds;
+    CommandProgress completed;
+
+    //Initialization
+    On system start{
+        completed = CommandProgress();
+    }
+
+    //Periodic tasks
+    Periodically{
+        For each CompletionMonitor cpm{
+            cpm.getThreshold();
+        }
+    }
+
+    //Inputs
+    On receiving CommandProgress p from CompletionMonitorID cmp{
+        //Check input
+        if (p <= completed) return;
+        if (p <= thresholds[cpm]) return;
+
+        //store input
+        thresholds[clt] = p;
+
+        //update state
+        CommandProgress v = thresholds.highest(F+1);
+        For each Client clt{
+            completed[clt] = max(completed[clt], v[clt]);
+        }
+    }
+}
+
+
+
+//Initialization
+On system start{
+
+}
+
+//Services
+
+//Periodic tasks
+Periodically{
+
+}
+
+//Inputs
+
+//Auxiliary methods
