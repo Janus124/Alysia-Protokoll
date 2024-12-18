@@ -1,8 +1,7 @@
 //-----DATA STRUCTURES-----
 class ChainStructure{
-    int lenght;
     List<ChainID> chain;
-    int n;              //aus wie vielen ChainElementen die Chain bestehen soll.
+    int n;              //aus wie vielen ChainElementen die aktive Chain bestehen soll.
 
     ChainStructure();
     void delete(ChainID id);    //wenn nicht enthalten passiert nichts
@@ -10,7 +9,7 @@ class ChainStructure{
     ChainID infront(Chainid id);
     ChainID getTail();
     ChainID getHead();
-    Mode getMode(ChainID);
+    Mode getMode(ChainID id);
     List<ChainID> getIDs();
 }
 
@@ -106,7 +105,6 @@ class ChainOpinions<ChainID, ValueOpinions<OrganizerID, ChainId, boolean>> {    
         }
         return voter.vote();
     }
-
 }
 
 def ChainMaps: Map<OrganizerID, ChainMap>
@@ -284,6 +282,7 @@ class Chain extends ChainObserver, AgreementObserver, CompletionObserver{
     On ChainStructure chain change{
         //change to new mode 
         mode = chain.getMode(this.id);
+        lastContact = TimeStamp.now();
     }
 
     //Services
@@ -496,7 +495,7 @@ class Organizer{
     On system start{
         chainMap = ChainMap();
         timeStamps = Map();
-        int timeout = //?;    
+        timeout = 100;      // sec oder min    
     }
 
     //Services
@@ -518,7 +517,7 @@ class Organizer{
     }
 
     //Inputs
-    On receiving TimeStamp ts from ChainID chn{
+    On receiving TimeStamp ts from ChainID chn{     //!Der Knoten davor muss auf 1 gesetzt werden
         if(ts <= liveliness[chn]) return;
         liveliness[chn] = ts;
 
@@ -574,8 +573,8 @@ class ChainObserver{
     On receiving FailedChain fc from Organizer org{
         failedChains[org].mergeFailed(fc);
 
-        for each ChainId id in failedChains[orga]{
-            opinions.put(org, id, failedChains[orga][id]);
+        for each ChainId id in failedChains[org]{
+            opinions.put(org, id, failedChains[org][id]);
         }
         updateChain();
     }
@@ -589,12 +588,12 @@ class ChainObserver{
             allIDs.add(id);
         }
         for ChainID id in adminChain{
-            allIDs.add(id)
+            allIDs.add(id);
         }
         
         //update Chain
         for ChainID id in allIDs{
-            if(opinions.match(ChainID, F+1) && adminChain.contains(id)) chain.add(id)
+            if(opinions.match(id, F+1) && adminChain.contains(id)) chain.add(id);
             else chain.delete(id);
         }
     }
